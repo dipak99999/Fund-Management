@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ethers } from 'ethers';
+import { ethers, keccak256, AbiCoder } from 'ethers';
 import './App.css';
 import abi from './abis/MemberFundManagement.json';
 
@@ -19,12 +19,12 @@ const App = () => {
       if (window.ethereum) {
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
-        const contractAddress = '0x6E13c07ff0FB745F18463E9EB0aD854056Ba67B4';
+        const contractAddress = '0xA55bD5d17Bf9A3486ee842eE394283Bb488Dc585';
 
         try {
           const contract = new ethers.Contract(contractAddress, abi.abi, signer);
           setContract(contract);
-          await loadMembers(contract); 
+          await loadMembers(contract);
         } catch (error) {
           console.error('Error creating contract:', error);
         }
@@ -38,20 +38,20 @@ const App = () => {
 
   const loadMembers = async (contract) => {
     try {
-        const memberCount = await contract.getMemberCount();
-        const loadedMembers = [];
-        const updatedApprovalStatus = {};
+      const memberCount = await contract.getMemberCount();
+      const loadedMembers = [];
+      const updatedApprovalStatus = {};
 
-        for (let i = 0; i < memberCount; i++) {
-            const member = await contract.getMember(i);
-            loadedMembers.push(member);
-            updatedApprovalStatus[member] = await contract.approvals(member); 
-        }
+      for (let i = 0; i < memberCount; i++) {
+        const member = await contract.getMember(i);
+        loadedMembers.push(member);
+        updatedApprovalStatus[member] = await contract.approvals(member);
+      }
 
-        setMembers(loadedMembers);
-        setApprovalStatus(updatedApprovalStatus);
+      setMembers(loadedMembers);
+      setApprovalStatus(updatedApprovalStatus);
     } catch (error) {
-        console.error('Error loading members:', error);
+      console.error('Error loading members:', error);
     }
   };
 
@@ -76,21 +76,22 @@ const App = () => {
   };
 
   const distributeFunds = (totalAmount) => {
-    const amountPerMember = totalAmount / members.length; 
+    const amountPerMember = totalAmount / members.length;
     const updatedDistributedAmounts = {};
 
     members.forEach((member) => {
       updatedDistributedAmounts[member] = amountPerMember;
     });
 
-    setDistributedAmounts(updatedDistributedAmounts); 
+    setDistributedAmounts(updatedDistributedAmounts);
   };
+
 
   const setTotalAmount = async () => {
     if (!amount) return;
 
     try {
-      const amountInWei = ethers.parseUnits(amount, 'ether');
+      const amountInWei = ethers.parseUnits(amount, 'ether'); // Adjusted usage
       const tx = await contract.setTotalAmount(amountInWei);
       await tx.wait();
 
@@ -104,30 +105,39 @@ const App = () => {
 
   const approveTransaction = async () => {
     try {
-      const totalAmount = await contract.totalAmount(); 
-      const memberCount = await contract.getMemberCount(); 
-  
+      const totalAmount = await contract.totalAmount();
+      const memberCount = await contract.getMemberCount();
       const amountPerMember = totalAmount / memberCount;
-  
-      console.log('Amount per member:',totalAmount, ethers.formatEther(amountPerMember.toString()), 'ETH',ethers.parseUnits(amountPerMember.toString(), 'wei'));
-  
- 
-   
-      const tx = await contract.approve({
-        value: ethers.parseUnits(amountPerMember.toString(), 'wei'), 
-        gasLimit: 300000, 
+
+      const nonce = await contract.nonces(account);
+      
+      // Create an instance of AbiCoder
+      const abiCoder = new AbiCoder();
+      const encodedParams = abiCoder.encode(
+        ["address", "uint256", "uint256"],
+        [account, amountPerMember, nonce]
+      );
+
+      const message = keccak256(encodedParams);
+
+      const signature = await window.ethereum.request({
+        method: 'personal_sign',
+        params: [message, account]
       });
-  
+
+      const tx = await contract.approveWithSignature(account, ethers.parseUnits(amountPerMember.toString(), 'wei'), signature, {
+        gasLimit: 300000,
+      });
+
       await tx.wait();
-  
       alert('Transaction approved successfully!');
-  
+
       setApprovalStatus({ ...approvalStatus, [account]: true });
       setApprovalsReceived((prev) => prev + 1);
-  
+
       setDistributedAmounts((prev) => {
         const updatedAmounts = { ...prev };
-        updatedAmounts[account] = 0; 
+        updatedAmounts[account] = 0;
         return updatedAmounts;
       });
     } catch (error) {
